@@ -1,4 +1,4 @@
-# coding=utf-8
+#coding=utf-8
 
 import numpy as np
 import cv2
@@ -8,21 +8,30 @@ from acllite_imageproc import AclLiteImage, AclLiteImageProc
 from acllite_model import AclLiteModel
 from acllite_resource import AclLiteResource
 
+
 input_imgH = 640
 input_imgW = 640
-conf_thres = 0.25
-iou_thres = 0.45
+conf_thres=0.25
+iou_thres=0.45
 
-labels = ['person', 'aqmzc', 'gzzc', 'safebelt', 'xy', 'glove']
+classes = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
+    'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+    'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+    'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard',
+    'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+    'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+    'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+    'hair drier', 'toothbrush']
 current_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(current_dir, "./model/anfang.om")
+model_path = os.path.join(current_dir, "./model/yolov8.om")
 images_path = os.path.join(current_dir, "./data")
-video_inference = True
+video_inference = False
 video_path = "./E20241202110717_20241202110729.mp4"
 output_path = './out'
 
 
-# éæå¤§å€¼æŠ‘åˆ¶ï¼ˆNMSï¼‰
+# ·Ç¼«´óÖµÒÖÖÆ£¨NMS£©
 def nms(boxes, scores, iou_thres):
     if len(boxes) == 0:
         return []
@@ -48,19 +57,18 @@ def nms(boxes, scores, iou_thres):
         order = order[inds + 1]
     return keep
 
-
-# åå¤„ç†
+# ºó´¦Àí
 def postprocess(outputs, img_shape, conf_thres=0.25, iou_thres=0.45):
-    print("Postprocessing output shape:", outputs.shape)
-    outputs = np.transpose(np.squeeze(outputs))  # è½¬ç½®å¹¶å‹ç¼©è¾“å‡º
+    outputs = np.transpose(np.squeeze(outputs))
     rows = outputs.shape[0]
     boxes = []
     scores = []
     class_ids = []
-    x_factor = img_shape[1] / input_imgW  # å‡è®¾æ¨¡å‹è¾“å…¥å°ºå¯¸ä¸º640x640
+    x_factor = img_shape[1] / input_imgW
     y_factor = img_shape[0] / input_imgH
+    
     for i in range(rows):
-        classes_scores = outputs[i][4:]  # æå–ç±»åˆ«åˆ†æ•°
+        classes_scores = outputs[i][4:]
         max_score = np.amax(classes_scores)
         if max_score >= conf_thres:
             class_id = np.argmax(classes_scores)
@@ -69,128 +77,151 @@ def postprocess(outputs, img_shape, conf_thres=0.25, iou_thres=0.45):
             y = y * y_factor
             w = w * x_factor
             h = h * y_factor
-            boxes.append([x - w / 2, y - h / 2, x + w / 2, y + h / 2])  # è½¬æ¢ä¸ºå·¦ä¸Šè§’å’Œå³ä¸‹è§’åæ ‡
+            boxes.append([x - w / 2, y - h / 2, x + w / 2, y + h / 2])
             scores.append(max_score)
             class_ids.append(class_id)
+    
+    if len(boxes) == 0:
+        return np.array([]), np.array([]), np.array([])
+    
     boxes = np.array(boxes)
     scores = np.array(scores)
     indices = nms(boxes, scores, iou_thres)
-    boxes = boxes[indices]
-    scores = scores[indices]
-    class_ids = np.array(class_ids)[indices]
-    print(f"Number of detections: {len(boxes)}")
-    return boxes, scores, class_ids
+    
+    return boxes[indices], scores[indices], np.array(class_ids)[indices]
 
-
-# å›¾ç‰‡é¢„å¤„ç†
-def preprocess_image(image_path, input_shape=(input_imgW, input_imgH)):
-    if video_inference == False:
-        image = cv2.imread(image_path)
-    else:
-        image = image_path
-    if image is None:
-        raise ValueError(f"Failed to load image from {image_path}")
+# Í¼Æ¬Ô¤´¦Àí
+def preprocess_image(image, input_shape=(input_imgW, input_imgH)):
     original_shape = image.shape[:2]
-    image = cv2.resize(image, input_shape, interpolation=cv2.INTER_LINEAR)
-    image = image.astype(np.float32) / 255.0  # å½’ä¸€åŒ–
-    image = np.transpose(image, (2, 0, 1))  # è½¬æ¢ä¸ºCHWæ ¼å¼
-    image = np.expand_dims(image, axis=0)  # æ·»åŠ batchç»´åº¦
-    # print(f"Input image shape: {image.shape}, dtype: {image.dtype}")
-    return image, original_shape
+    resized_img = cv2.resize(image, input_shape, interpolation=cv2.INTER_LINEAR)
+    normalized_img = resized_img.astype(np.float32) / 255.0
+    chw_img = np.transpose(normalized_img, (2, 0, 1))
+    input_data = np.expand_dims(chw_img, axis=0)
+    return input_data, original_shape
 
+# »æÖÆ¼ì²â½á¹û
+def draw_result(image, boxes, scores, class_ids):
+    if len(boxes) == 0:
+        return image
+    
+    for box, score, class_id in zip(boxes, scores, class_ids):
+        x1, y1, x2, y2 = map(int, box)
+        # »æÖÆ±ß½ç¿ò
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        # ´´½¨±êÇ©ÎÄ±¾
+        label = f"{classes[class_id]}:{score:.2f}"
+        # ¼ÆËãÎÄ±¾³ß´ç
+        (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        # »æÖÆÎÄ±¾±³¾°
+        cv2.rectangle(image, (x1, y1 - text_height - 10), (x1 + text_width, y1), (0, 0, 255), -1)
+        # »æÖÆÎÄ±¾
+        cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # ´òÓ¡¼ì²â½á¹û
+        print(f"Detect: {classes[class_id]} - Confidence: {score:.4f} - Location: [{x1}, {y1}, {x2}, {y2}]")
+    return image
 
-# ä¸»å‡½æ•°
+# Ö÷º¯Êı
 if __name__ == "__main__":
-    # åˆå§‹åŒ–ACLiteèµ„æº
+    # ³õÊ¼»¯ACLite×ÊÔ´
     acl_resource = AclLiteResource()
     acl_resource.init()
 
-    # åˆå§‹åŒ–æ¨¡å‹
-    # model_path = "./model/yolov8.om"  # ACLiteæ¨¡å‹è·¯å¾„
-    model = AclLiteModel(model_path)
+    # ³õÊ¼»¯Ä£ĞÍ
+    model = AclLiteModel(model_path) 
     if model is None:
         print("Error: Model loading failed!")
         exit(1)
-    else:
-        print("Model loaded successfully.")
-
-    # å›¾ç‰‡é¢„å¤„ç†
-    if video_inference == False:
-        print('--> image -----------------------------------------')
+    print("Model loaded successfully.")
+    
+    # È·±£Êä³öÄ¿Â¼´æÔÚ
+    os.makedirs(output_path, exist_ok=True)
+    
+    if not video_inference:
+        print('--> Processing images-----------------------------------------') 
         if not os.path.exists(images_path):
             raise Exception("The images path does not exist.")
-        all_path = [os.path.join(images_path, path) for path in os.listdir(images_path) if path != '.keep']
-        if len(all_path) == 0:
-            raise Exception("The directory is empty, please download images.")
-        # image_path = "./data/test.jpg"  # è¾“å…¥å›¾ç‰‡è·¯å¾„
-        for image_path in all_path:
-            input_image, original_shape = preprocess_image(image_path)
-            # print(f"Input image shape: {input_image.shape}")
-
-            # æ‰§è¡Œæ¨ç†
-            output = model.execute([input_image])
+        
+        # ±éÀúËùÓĞÍ¼Ïñ
+        for img_name  in os.listdir(images_path):
+            if not img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                continue
+            img_path = os.path.join(images_path, img_name)
+            print(f"Processing image: {img_name}")
+            # ¶ÁÈ¡Í¼Æ¬
+            image = cv2.imread(img_path)            
+            if image is None:
+                print(f"Failed read: {img_path}")
+                continue
+            
+            # Ô¤´¦Àí
+            input_data, original_shape = preprocess_image(image)
+            
+            # ÍÆÀí
+            output = model.execute([input_data])
             if output is None:
                 print("Error: Inference failed!")
                 exit(1)
-            else:
-                print("Inference succeeded.")
-
-            # åå¤„ç†
+            print("Inference succeeded.")
+        
+            # ºó´¦Àí
             boxes, scores, class_ids = postprocess(output[0], original_shape)
-
-            # å¯è§†åŒ–ç»“æœ
-            image = cv2.imread(image_path)
-            for box, score, class_id in zip(boxes, scores, class_ids):
-                x1, y1, x2, y2 = map(int, box)
-                cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                cv2.putText(image, f"{labels[class_id]}:{score:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                            (0, 0, 255), 2)
-            output_path = os.path.join(output_path, os.path.basename(image_path))
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            cv2.imwrite(output_path, image)
-    # æ‰“å¼€è§†é¢‘æ–‡ä»¶
+            # »æÖÆ½á¹û
+            result_image = draw_result(image, boxes, scores, class_ids)
+        
+            # ±£´æ½á¹û
+            output_file = os.path.join(output_path,  f"det_{img_name}")
+            cv2.imwrite(output_file, result_image)
+            print(f"Save to: {output_file}\n")
+            
+    # ´ò¿ªÊÓÆµÎÄ¼ş
     else:
-        print('--> video -----------------------------------------')
+        print('--> Processing video -----------------------------------------')
         cap = cv2.VideoCapture(video_path)
-        output_path = os.path.join(output_path, os.path.basename(video_path))  # [:-4]+'.aiv')
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        print("output_path:", output_path)
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'MP4V'), 20.0, (640, 480))  # *'mp4v' \ *'MJPG'
-        while (cap.isOpened()):
+        if not cap.isOpened():
+            raise Exception(f"Failed to open video: {video_path}")
+            
+        # »ñÈ¡ÊÓÆµÊôĞÔ
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        
+        # ´´½¨Êä³öÊÓÆµ
+        output_path = os.path.join(output_dir, os.path.basename(video_path))
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+        
+        frame_count = 0
+        while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
-            # å›¾ç‰‡é¢„å¤„ç†
-            input_image, original_shape = preprocess_image(frame)
-            # print(f"Input image shape: {input_image.shape}")
-            # æ‰§è¡Œæ¨ç†
-            output = model.execute([input_image])
+            
+            # Ô¤´¦Àí
+            input_data, original_shape = preprocess_image(frame)
+            
+            # ÍÆÀí
+            output = model.execute([input_data])
             if output is None:
-                print("Error: Inference failed!")
-                exit(1)
+                print(f"Inference failed for frame {frame_count}")
             else:
-                print("Inference succeeded.")
-
-            # åå¤„ç†
-            boxes, scores, class_ids = postprocess(output[0], original_shape)
-
-            # å¯è§†åŒ–ç»“æœ
-            image = frame  # cv2.imread(image_path)
-            if len(boxes) == 0:
-                print("No detections found in this frame.")
-            else:
-                for box, score, class_id in zip(boxes, scores, class_ids):
-                    x1, y1, x2, y2 = map(int, box)
-                    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    cv2.putText(image, f"{labels[class_id]}:{score:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                                (0, 0, 255), 2)
-            out.write(image)
-        # é‡Šæ”¾èµ„æº
+                # ºó´¦Àí
+                boxes, scores, class_ids = postprocess(output[0], original_shape)
+                # »æÖÆ½á¹û
+                frame = draw_result(frame, boxes, scores, class_ids)
+            
+            # Ğ´ÈëÊä³öÊÓÆµ
+            out.write(frame)
+            frame_count += 1
+            if frame_count % 30 == 0:
+                print(f"Processed {frame_count} frames")
+        
+        # ÊÍ·Å×ÊÔ´
         cap.release()
         out.release()
-        # cv2.waitKey(1)
-        # cv2.imwrite(output_path, image)
-
-    # é‡Šæ”¾èµ„æº
+        print(f"Video processing completed. Total frames: {frame_count}\n")
+    
+    # ÊÍ·Å×ÊÔ´
+    model.destroy()
     acl.finalize()
-    print("Success")
+    print("!!!!!!!!!!!!!!!!!!!!!!!SUCCESS!!!!!!!!!!!!!!!!!!!!!")
+   
